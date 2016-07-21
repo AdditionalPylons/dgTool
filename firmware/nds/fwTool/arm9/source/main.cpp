@@ -11,9 +11,10 @@
 
 extern "C" {
 	bool nand_ReadSectors(sec_t sector, sec_t numSectors,void* buffer);
+	bool nand_WriteSectors(sec_t sector, sec_t numSectors,void* buffer); //!!!
 }
 
-int menuTop = 8, statusTop = 15;
+int menuTop = 5, statusTop = 18;
 
 //---------------------------------------------------------------------------------
 int saveToFile(const char *filename, u8 *buffer, size_t size) {
@@ -48,6 +49,11 @@ size_t userSettingsOffset, fwSize, wifiOffset, wifiSize;
 //---------------------------------------------------------------------------------
 void clearStatus() {
 //---------------------------------------------------------------------------------
+	iprintf("\x1b[%d;0H\x1b[J\x1b[15;0H",statusTop); 
+	iprintf("                                ");    //clean up after previous residents
+	iprintf("                                ");
+	iprintf("                                ");
+	iprintf("                                ");
 	iprintf("\x1b[%d;0H\x1b[J\x1b[15;0H",statusTop);
 }
 
@@ -151,6 +157,28 @@ void backupWifi() {
 	}
 }
 
+u32 sysid=0;
+u32 ninfo=0;
+u32 sizMB=0;
+char nand_type[80]={0};
+char nand_dump[80]={0};
+char nand_rest[80]={0};
+
+void chk() {
+	
+	nand_ReadSectors(0 , 1 , firmware_buffer);
+	memcpy(&sysid, firmware_buffer + 0x100, 4);
+	memcpy(&ninfo, firmware_buffer + 0x104, 4);
+	
+	if     (ninfo==0x00200000){sizMB=8; strcpy(nand_type,"F0F1_O3DS.BIN");} //old3ds
+	else if(ninfo==0x00280000){sizMB=8; strcpy(nand_type,"F0F1_N3DS.BIN");} //new3ds
+	else if(sysid!=0x4453434E){sizMB=240; strcpy(nand_type,"NAND_DSI.BIN");}  //dsi
+	else                      {sizMB=0;   strcpy(nand_type,"");}              //not recognized, do nothing
+	sprintf(nand_dump,"Dump    %s",nand_type);
+	sprintf(nand_rest,"Restore %s",nand_type);
+	
+}
+
 //---------------------------------------------------------------------------------
 void backupNAND() {
 //---------------------------------------------------------------------------------
@@ -159,34 +187,105 @@ void backupNAND() {
 
 
 	if (!__dsimode) {
-		iprintf("Not a DSi!\n");
+		iprintf("Not a DSi or 3ds!\n");
 	} else {
 
-		FILE *f = fopen("nand.bin", "wb");
+		FILE *f = fopen(nand_type, "wb");
 
 		if (NULL == f) {
-			iprintf("failure creating nand.bin\n");
+			iprintf("failure creating %s\n", nand_type);
 		} else {
-			iprintf("Writing %s/nand.bin\n\n", dirname );
-			size_t i;
+			iprintf("Writing %s/%s\n\n", dirname, nand_type);
+			size_t foffset=0x0B130000/0x200; //firm0 nand offset
+			size_t i; 
 			size_t sectors = 128;
-			size_t blocks = (240 * 1024 * 1024) / (sectors * 512);
-			for (i=0; i < blocks; i++) {
-				if(!nand_ReadSectors(i * sectors,sectors,firmware_buffer)) {
-					iprintf("\nError reading NAND!\n");
+			size_t blocks = (sizMB * 1024 * 1024) / (512);
+			for (i=0; i < blocks; i+=128) {
+				if(!nand_ReadSectors(i + foffset,sectors,firmware_buffer)) {
+					iprintf("\nError reading FIRM!\n");
 					break;
 				}
 				size_t written = fwrite(firmware_buffer, 1, 512 * sectors, f);
+				
 				if(written != 512 * sectors) {
 					iprintf("\nError writing to SD!\n");
 					break;
 				}
-				iprintf("Block %d of %d\r", i+1, blocks);
+				iprintf("%d of %d\r", i+128, blocks);
 			}
 			fclose(f);
 		}
 	}
+	iprintf("\nDone!\r");
 
+}
+
+//---------------------------------------------------------------------------------
+void restoreNAND() {
+//---------------------------------------------------------------------------------
+
+	clearStatus();
+
+	if (!__dsimode) {
+		iprintf("Not a DSi or 3ds!\n");
+	} else {
+		
+		iprintf("Sure? NAND restore is DANGEROUS!");
+		iprintf("START + SELECT confirm\n");
+		iprintf("B to exit\n");
+		
+		while(1){
+		    scanKeys();
+			int keys = keysHeld();
+			if((keys & KEY_START) && (keys & KEY_SELECT))break;
+			if(keys & KEY_B){
+				clearStatus();
+				return;
+			}
+			swiWaitForVBlank();
+		}
+		
+		clearStatus();
+	
+		FILE *f = fopen(nand_type, "rb");
+
+		if (NULL == f) {
+			iprintf("failure creating %s\n", nand_type);
+		} else {
+			iprintf("Reading %s/%s\n\n", dirname, nand_type);
+			size_t foffset=0x0B130000/0x200; //firm0 nand offset
+			size_t i; 
+			size_t sectors = 128;
+			size_t blocks = (sizMB * 1024 * 1024) / (512);
+			for (i=0; i < blocks; i+=128) {
+				
+				size_t read = fread(firmware_buffer, 1, 512 * sectors, f);
+				
+				if(read != 512 * sectors) {
+					iprintf("\nError reading SD!\n");
+					break;
+				}
+				
+				if(!nand_WriteSectors(i + foffset,sectors,firmware_buffer)) {
+					iprintf("\nError writing FIRM!\n");
+					break;
+				}
+				
+				iprintf("%d/%d DON'T poweroff!\r", i+128, blocks);
+			}
+			fclose(f);
+		}
+	}
+	iprintf("\nDone!\r");
+}
+
+void dumpCID(){
+	clearStatus();
+	
+	u8 *CID=(u8*)0x2FFD7BC;
+	
+	if(!saveToFile("CID.bin",CID,16))iprintf("CID dumped!\n");
+		else iprintf("CID dump failed!\n");
 }
 
 bool quitting = false;
@@ -198,18 +297,21 @@ void quit() {
 }
 
 struct menuItem mainMenu[] = {
+	{ "Exit", quit },
 	{ "Backup Firmware", backupFirmware } ,
 	{ "Dump Bios", backupBIOS } ,
 	{ "Backup User Settings", backupSettings } ,
 	{ "Backup Wifi Settings", backupWifi } ,
-	{ "Backup DSi NAND", backupNAND},
+	{ "Dump CID", dumpCID} ,
+	{ nand_dump , backupNAND},
+	{ nand_rest , restoreNAND}
 /*
 	TODO
 
 	{ "Restore Firmware", dummy } ,
 	{ "Restore User Settings", dummy } ,
 	{ "Restore Wifi Settings", dummy } ,
-*/	{ "Exit", quit }
+*/	
 };
 
 //---------------------------------------------------------------------------------
@@ -239,7 +341,7 @@ int main() {
 
 		readFirmware(0, firmware_buffer, 512);
 
-		iprintf("\x1b[3;0HMAC ");
+		iprintf("\x1b[2;0HMAC ");
 		for (int i=0; i<6; i++) {
 			printf("%02X", firmware_buffer[0x36+i]);
 			sprintf(&dirname[2+(2*i)],"%02X",firmware_buffer[0x36+i]);
@@ -267,8 +369,11 @@ int main() {
 		}
 
 		int count = sizeof(mainMenu) / sizeof(menuItem);
+		
+		chk();
 
 		showMenu(mainMenu, count);
+		
 
 		int selected = 0;
 		quitting = false;
