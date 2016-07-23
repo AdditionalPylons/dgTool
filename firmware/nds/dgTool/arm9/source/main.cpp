@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define MAX_SIZE	(1*1024*1024)
+#define MAX_SIZE	(128*512) //128 sectors
 
 extern "C" {
 	bool nand_ReadSectors(sec_t sector, sec_t numSectors,void* buffer);
@@ -15,7 +15,23 @@ extern "C" {
 }
 
 int menuTop = 5, statusTop = 18;
+char dirname[15] = {0};
 
+u32 sysid=0;
+u32 ninfo=0;
+u32 sizMB=0;
+u32 System=0;
+char nand_type[80]={0};
+char nand_dump[80]={0};
+char nand_rest[80]={0};
+u8 *firmware_buffer; //raw dump and restore in first two options
+u8 *fbuff; //sd firm files
+u8 *xbuff; //xorpad
+u8 *nbuff; //nand
+u32 N3DS=2;
+u32 O3DS=1;
+
+/*
 //---------------------------------------------------------------------------------
 int saveToFile(const char *filename, u8 *buffer, size_t size) {
 //---------------------------------------------------------------------------------
@@ -26,25 +42,11 @@ int saveToFile(const char *filename, u8 *buffer, size_t size) {
 	if (written != size) return -2;
 	return 0;
 }
-
-//---------------------------------------------------------------------------------
-int readJEDEC() {
-//---------------------------------------------------------------------------------
-
-	fifoSendValue32(FIFO_USER_01, 1);
-
-	fifoWaitValue32(FIFO_USER_01);
-
-	return  fifoGetValue32(FIFO_USER_01);
-}
-
+*/
 struct menuItem {
 	const char* name;
 	fp function;
 };
-
-u8 *firmware_buffer;
-size_t userSettingsOffset, fwSize, wifiOffset, wifiSize;
 
 //---------------------------------------------------------------------------------
 void clearStatus() {
@@ -57,122 +59,15 @@ void clearStatus() {
 	iprintf("\x1b[%d;0H\x1b[J\x1b[15;0H",statusTop);
 }
 
-//---------------------------------------------------------------------------------
-void dummy() {
-//---------------------------------------------------------------------------------
-	clearStatus();
-	iprintf("\x1b[%d;6HNOT IMPLEMENTED!",statusTop+3);
-}
-
-char dirname[15] = "FW";
-char serial[13];
-
-//---------------------------------------------------------------------------------
-void backupFirmware() {
-//---------------------------------------------------------------------------------
-
-	clearStatus();
-
-	readFirmware(0, firmware_buffer, fwSize);
-
-	if (saveToFile("firmware.bin", firmware_buffer, fwSize) < 0) {
-		iprintf("Error saving firmware!\n");
-	} else {
-		iprintf("Firmware saved as\n\n%s/firmware.bin", dirname );
-	}
-}
-
-//---------------------------------------------------------------------------------
-void backupBIOS() {
-//---------------------------------------------------------------------------------
-	int dumpcmd = 0;
-
-	clearStatus();
-
-	const char *arm7file, *arm9file;
-	size_t arm7size, arm9size;
-
-	if (__dsimode) {
-		arm7file = "bios7i.bin";
-		arm7size = 64 * 1024;
-		arm9file = "bios9i.bin";
-		arm9size = 64 * 1024;
-		dumpcmd = 3;
-	} else {
-		arm7file = "bios7.bin";
-		arm7size = 16 * 1024;
-		arm9file = "bios9.bin";
-		arm9size = 32 * 1024;
-		dumpcmd = 2;
-	}
-
-	if (saveToFile(arm9file, (u8*)0xffff0000, arm9size ) < 0) {
-		iprintf("Error saving arm9 bios\n");
-		return;
-	}
-
-	fifoSendValue32(FIFO_USER_01, dumpcmd);
-	fifoSendValue32(FIFO_USER_01, (u32)firmware_buffer);
-
-	fifoWaitValue32(FIFO_USER_01);
-
-	fifoGetValue32(FIFO_USER_01);
-
-	if (saveToFile(arm7file, firmware_buffer, arm7size) < 0 ) {
-		iprintf("Error saving arm7 bios\n");
-		return;
-	}
-
-	iprintf("BIOS saved as\n\n%1$s/%2$s\n%1$s/%3$s", dirname, arm7file, arm9file );
-
-}
-
-//---------------------------------------------------------------------------------
-void backupSettings() {
-//---------------------------------------------------------------------------------
-
-	clearStatus();
-
-	readFirmware(userSettingsOffset, firmware_buffer + userSettingsOffset, 512);
-
-	if (saveToFile("UserSettings.bin", firmware_buffer + userSettingsOffset, 512) < 0) {
-		iprintf("Error saving settings1!\n");
-	} else {
-		iprintf("User settings saved as\n\n%s/UserSettings.bin", dirname );
-	}
-}
-
-//---------------------------------------------------------------------------------
-void backupWifi() {
-//---------------------------------------------------------------------------------
-
-	clearStatus();
-
-	readFirmware(wifiOffset, firmware_buffer + wifiOffset, wifiSize);
-
-	if (saveToFile("WifiSettings.bin", firmware_buffer + wifiOffset, wifiSize) < 0) {
-		iprintf("Error saving Wifi settings!\n");
-	} else {
-		iprintf("Wifi settings saved as\n\n%s/WifiSettings.bin", dirname );
-	}
-}
-
-u32 sysid=0;
-u32 ninfo=0;
-u32 sizMB=0;
-char nand_type[80]={0};
-char nand_dump[80]={0};
-char nand_rest[80]={0};
-
 void chk() {
 	
 	nand_ReadSectors(0 , 1 , firmware_buffer);
 	memcpy(&sysid, firmware_buffer + 0x100, 4);
 	memcpy(&ninfo, firmware_buffer + 0x104, 4);
 	
-	if     (ninfo==0x00200000){sizMB=8; strcpy(nand_type,"F0F1_O3DS.BIN");} //old3ds
-	else if(ninfo==0x00280000){sizMB=8; strcpy(nand_type,"F0F1_N3DS.BIN");} //new3ds
-	else if(sysid!=0x4453434E){sizMB=240; strcpy(nand_type,"NAND_DSI.BIN");}  //dsi
+	if     (ninfo==0x00200000){strcpy(nand_type,"F0F1_O3DS.BIN"); System=O3DS; iprintf("OLD 3DS\n");} //old3ds
+	else if(ninfo==0x00280000){strcpy(nand_type,"F0F1_N3DS.BIN"); System=N3DS; iprintf("NEW 3DS\n");} //new3ds
+	else if(sysid!=0x4453434E){sizMB=0;   strcpy(nand_type,"");}              //dsi - lets do this in another app
 	else                      {sizMB=0;   strcpy(nand_type,"");}              //not recognized, do nothing
 	sprintf(nand_dump,"Dump    %s",nand_type);
 	sprintf(nand_rest,"Restore %s",nand_type);
@@ -184,10 +79,10 @@ void backupNAND() {
 //---------------------------------------------------------------------------------
 
 	clearStatus();
-
+	sizMB=8;
 
 	if (!__dsimode) {
-		iprintf("Not a DSi or 3ds!\n");
+		iprintf("Not a 3ds!\n");
 	} else {
 
 		FILE *f = fopen(nand_type, "wb");
@@ -225,6 +120,7 @@ void restoreNAND() {
 //---------------------------------------------------------------------------------
 
 	clearStatus();
+	sizMB=8;
 
 	if (!__dsimode) {
 		iprintf("Not a DSi or 3ds!\n");
@@ -279,13 +175,119 @@ void restoreNAND() {
 	iprintf("\nDone!\r");
 }
 
-void dumpCID(){
+void xorbuff(u8 *in1, u8 *in2, u8 *out){
+	
+	for(int i=0; i < MAX_SIZE; i++){  //not concerned about the portability of a 6 liner
+		out[i] = in1[i] ^ in2[i];
+	}
+	
+}
+
+void dgFIRM() {
+//---------------------------------------------------------------------------------
 	clearStatus();
+	sizMB=4;
 	
-	u8 *CID=(u8*)0x2FFD7BC;
+	u32 werror=0;
+	u32 rerror=0;
 	
-	if(!saveToFile("CID.bin",CID,16))iprintf("CID dumped!\n");
-		else iprintf("CID dump failed!\n");
+	if (!__dsimode) {
+		iprintf("Not a 3ds!\n");
+	} else {
+		
+		iprintf("Sure?\nFIRM downgrade is DANGEROUS!\n");
+		iprintf("START + SELECT confirm\n");
+		iprintf("B to exit\n");
+		
+		while(1){
+		    scanKeys();
+			int keys = keysHeld();
+			if((keys & KEY_START) && (keys & KEY_SELECT))break;
+			if(keys & KEY_B){
+				clearStatus();
+				return;
+			}
+			swiWaitForVBlank();
+		}
+		
+		clearStatus();
+		
+		char fname104[80]={0};
+		char fname110[80]={0};
+		
+		if     (System==O3DS){
+			sprintf(fname104,"firm104_%s.bin","OLD");
+			sprintf(fname110,"firm110_%s.bin","OLD");
+		}
+		else if(System==N3DS){
+		    sprintf(fname104,"firm104_%s.bin","NEW"); //firm104_OLD.bin firm110_OLD.bin
+			sprintf(fname110,"firm110_%s.bin","NEW");
+		}
+		else {
+			iprintf("System not recognized\n");
+			return;
+		}
+	
+		FILE *f104 = fopen(fname104,"rb");
+		FILE *f110 = fopen(fname110,"rb");
+
+		if (NULL == f110 || NULL == f104) {
+			iprintf("failure opening sd files\n");
+		} else {
+			iprintf("Opening %s/%s\nand          */%s\n\n", dirname, fname104,fname110);
+			size_t foffset=0x0B130000/0x200; //firm0 nand offset
+			size_t i; 
+			size_t sectors = 128;
+			size_t blocks = (sizMB * 1024 * 1024) / (512);
+			size_t rchk1=0;
+			size_t rchk2=0;
+			size_t rchk3=0;
+			size_t wchk1=0;
+			
+			for (i=0; i < blocks; i+=128) { 
+				
+				rchk1 = fread(fbuff, 1, 512 * sectors, f110);        //get dec firm 11.0 on sd
+				rchk2 = nand_ReadSectors(i + foffset,sectors,nbuff); //get enc firm 11.0 on nand
+
+				xorbuff(fbuff,nbuff,xbuff);                          //xor the above two buffs to create xorpad buff
+				
+				rchk3 = fread(fbuff, 1, 512 * sectors, f104);        //get dec firm 10.4 on sd
+				
+				xorbuff(fbuff,xbuff,nbuff);                          //xor dec sd firm 10.4 and xorpad to create final encrypted image to write to nand
+				
+				if( (rchk1 != 512 * sectors) || (rchk3 != 512 * sectors) || (!rchk2) ) { rerror++; continue;} //assess read errors and skip writing if problem
+				
+				wchk1 = nand_WriteSectors(i + foffset,sectors,nbuff);//write to nand
+				
+				if(!wchk1) werror++;
+				
+				iprintf("%d/%d DON'T poweroff!\r", i+128, blocks);
+		
+			}
+		
+			fclose(f104);
+			fclose(f110);
+		}
+	}
+	iprintf("\nDone!\nreErr:%lu wrErr:%lu\r",rerror,werror);
+}
+
+u32 crc32b(u8 *message, u32 size) {  // http://www.hackersdelight.org/hdcodetxt/crc.c.txt
+   u32 i, j;
+   u32 byte, crc, mask;
+
+   i = 0;
+   crc = 0xFFFFFFFF;
+   while (i < size) {
+      byte = message[i];            // Get next byte.
+      crc = crc ^ byte;
+      for (j = 7; j >= 0; j--) {    // Do eight times.
+         mask = -(crc & 1);
+         crc = (crc >> 1) ^ (0xEDB88320 & mask);
+      }
+      i = i + 1;
+   }
+   return ~crc;
 }
 
 bool quitting = false;
@@ -298,20 +300,9 @@ void quit() {
 
 struct menuItem mainMenu[] = {
 	{ "Exit", quit },
-	{ "Backup Firmware", backupFirmware } ,
-	{ "Dump Bios", backupBIOS } ,
-	{ "Backup User Settings", backupSettings } ,
-	{ "Backup Wifi Settings", backupWifi } ,
-	{ "Dump CID", dumpCID} ,
 	{ nand_dump , backupNAND},
-	{ nand_rest , restoreNAND}
-/*
-	TODO
-
-	{ "Restore Firmware", dummy } ,
-	{ "Restore User Settings", dummy } ,
-	{ "Restore Wifi Settings", dummy } ,
-*/	
+	{ nand_rest , restoreNAND},
+	{"Downgrade FIRM to 10.4",dgFIRM}
 };
 
 //---------------------------------------------------------------------------------
@@ -323,11 +314,10 @@ void showMenu(menuItem menu[], int count) {
 	}
 }
 
-
 //---------------------------------------------------------------------------------
 int main() {
 //---------------------------------------------------------------------------------
-	defaultExceptionHandler();
+	//defaultExceptionHandler();
 
 	consoleDemoInit();
 
@@ -335,38 +325,19 @@ int main() {
 		printf("FAT init failed!\n");
 	} else {
 
-		iprintf("DS(i) firmware tool %s\n",VERSION);
+		iprintf("dgTool %s Beta\n",VERSION);
 
 		firmware_buffer = (u8 *)memalign(32,MAX_SIZE);
+		fbuff = (u8 *)memalign(32,MAX_SIZE);
+	    nbuff = (u8 *)memalign(32,MAX_SIZE);
+		xbuff = (u8 *)memalign(32,MAX_SIZE);
 
 		readFirmware(0, firmware_buffer, 512);
-
-		iprintf("\x1b[2;0HMAC ");
-		for (int i=0; i<6; i++) {
-			printf("%02X", firmware_buffer[0x36+i]);
-			sprintf(&dirname[2+(2*i)],"%02X",firmware_buffer[0x36+i]);
-			if (i < 5) printf(":");
-		}
-
-
-		dirname[14] = 0;
+		
+		strcpy(dirname,"dgTool");
 
 		mkdir(dirname, 0777);
 		chdir(dirname);
-
-		userSettingsOffset = (firmware_buffer[32] + (firmware_buffer[33] << 8)) *8;
-
-		fwSize = userSettingsOffset + 512;
-
-		iprintf("\n%dK flash, jedec %X", fwSize/1024,readJEDEC());
-
-		wifiOffset = userSettingsOffset - 1024;
-		wifiSize = 1024;
-
-		if ( firmware_buffer[29] == 0x57 ) {
-			wifiOffset -= 1536;
-			wifiSize += 1536;
-		}
 
 		int count = sizeof(mainMenu) / sizeof(menuItem);
 		
@@ -374,7 +345,6 @@ int main() {
 
 		showMenu(mainMenu, count);
 		
-
 		int selected = 0;
 		quitting = false;
 

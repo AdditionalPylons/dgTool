@@ -7,10 +7,10 @@ endif
 
 include $(DEVKITARM)/ds_rules
 
-export TARGET	:=	fwTool
+export TARGET	:=	dgTool
 export TOPDIR	:=	$(CURDIR)
 
-export VERSION	:=	1.6.1
+export VERSION	:=	1.0.0
 
 .PHONY: arm7/$(TARGET).elf arm9/$(TARGET).elf
 
