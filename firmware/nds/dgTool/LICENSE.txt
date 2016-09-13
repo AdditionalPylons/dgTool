@@ -1,4 +1,4 @@
-This software, dgTool 1.0.0 Beta (dgTool.nds), is distributed under the
+This software, dgTool 1.1.0 Beta (dgTool.nds), is distributed under the
 The MIT License (MIT)
 
 Copyright (c) 2016 wintermute and friends

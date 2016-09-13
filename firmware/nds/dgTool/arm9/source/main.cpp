@@ -213,15 +213,15 @@ void dgFIRM() {
 		clearStatus();
 		
 		char fname104[80]={0};
-		char fname110[80]={0};
+		char fname111[80]={0};
 		
 		if     (System==O3DS){
 			sprintf(fname104,"firm104_%s.bin","OLD");
-			sprintf(fname110,"firm110_%s.bin","OLD");
+			sprintf(fname111,"firm111_%s.bin","OLD");
 		}
 		else if(System==N3DS){
-		    sprintf(fname104,"firm104_%s.bin","NEW"); //firm104_OLD.bin firm110_OLD.bin
-			sprintf(fname110,"firm110_%s.bin","NEW");
+		    sprintf(fname104,"firm104_%s.bin","NEW"); //firm104_OLD.bin firm111_OLD.bin
+			sprintf(fname111,"firm111_%s.bin","NEW");
 		}
 		else {
 			iprintf("System not recognized\n");
@@ -229,12 +229,12 @@ void dgFIRM() {
 		}
 	
 		FILE *f104 = fopen(fname104,"rb");
-		FILE *f110 = fopen(fname110,"rb");
+		FILE *f111 = fopen(fname111,"rb");
 
-		if (NULL == f110 || NULL == f104) {
+		if (NULL == f111 || NULL == f104) {
 			iprintf("failure opening sd files\n");
 		} else {
-			iprintf("Opening %s/%s\nand          */%s\n\n", dirname, fname104,fname110);
+			iprintf("Opening %s/%s\nand          */%s\n\n", dirname, fname104,fname111);
 			size_t foffset=0x0B130000/0x200; //firm0 nand offset
 			size_t i; 
 			size_t sectors = 128;
@@ -246,8 +246,8 @@ void dgFIRM() {
 			
 			for (i=0; i < blocks; i+=128) { 
 				
-				rchk1 = fread(fbuff, 1, 512 * sectors, f110);        //get dec firm 11.0 on sd
-				rchk2 = nand_ReadSectors(i + foffset,sectors,nbuff); //get enc firm 11.0 on nand
+				rchk1 = fread(fbuff, 1, 512 * sectors, f111);        //get dec firm 11.1 on sd
+				rchk2 = nand_ReadSectors(i + foffset,sectors,nbuff); //get enc firm 11.1 on nand
 
 				xorbuff(fbuff,nbuff,xbuff);                          //xor the above two buffs to create xorpad buff
 				
@@ -266,7 +266,7 @@ void dgFIRM() {
 			}
 		
 			fclose(f104);
-			fclose(f110);
+			fclose(f111);
 		}
 	}
 	iprintf("\nDone!\nreErr:%lu wrErr:%lu\r",rerror,werror);
